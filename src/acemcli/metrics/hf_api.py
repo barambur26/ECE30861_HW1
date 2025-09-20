@@ -29,7 +29,7 @@ class HFAPIMetric:
         downloads = getattr(meta, "downloads", 0) or 0
         likes = getattr(meta, "likes", 0) or 0
         ramp = min(1.0, 0.3 + 0.7 * squash(likes, 100.0))
-        bus = min(1.0, 0.2 + 0.8 * squash(downloads, 10_000.0))
+        bus  = min(1.0, 0.2 + 0.8 * squash(downloads, 10_000.0))
 
         latency_ms = int((time.perf_counter() - t0) * 1000)
         return MetricResult(
