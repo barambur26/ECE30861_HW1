@@ -8,6 +8,7 @@ from acmecli.metrics.base import register
 log = logging.getLogger(__name__)
 
 class SizeScoreMetric:
+    # ClassVar to satisfy your Protocol
     name = "size_score"
 
     def supports(self, url: str, category: Category) -> bool:
@@ -20,7 +21,7 @@ class SizeScoreMetric:
             "raspberry_pi": s(caps["raspberry_pi"]),
             "jetson_nano": s(caps["jetson_nano"]),
             "desktop_pc": s(caps["desktop_pc"]),
-            "aws_server": s(caps["aws_server"]),
+            "aws_server":  s(caps["aws_server"]),
         }
 
     def compute(self, url: str, category: Category) -> MetricResult:
@@ -30,7 +31,11 @@ class SizeScoreMetric:
         weights_bytes = 0
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                local_dir = snapshot_download(repo_id=f"{namespace}/{repo}", local_dir=tmp, local_dir_use_symlinks=False)
+                local_dir = snapshot_download(
+                    repo_id=f"{namespace}/{repo}",
+                    local_dir=tmp,
+                    local_dir_use_symlinks=False,
+                )
                 p = Path(local_dir)
                 files = [f for f in p.rglob("*") if f.is_file()]
                 weights_bytes = sum(
@@ -43,11 +48,11 @@ class SizeScoreMetric:
         caps = {
             "raspberry_pi": 250_000_000,
             "jetson_nano": 500_000_000,
-            "desktop_pc": 4_000_000_000,
-            "aws_server": 16_000_000_000,
+            "desktop_pc":  4_000_000_000,
+            "aws_server":  16_000_000_000,
         }
         size_score = self._size_to_score(weights_bytes, caps)
-        log.info("size_score: %s/%s bytes=%d score=%s", namespace, repo, weights_bytes, size_score)
+        log.info("size_score %s/%s bytes=%d score=%s", namespace, repo, weights_bytes, size_score)
 
         latency_ms = int((time.perf_counter() - t0) * 1000)
         return MetricResult(
