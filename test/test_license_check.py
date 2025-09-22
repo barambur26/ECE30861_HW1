@@ -1,7 +1,7 @@
 # tests/test_license_check.py
 import textwrap
 from pathlib import Path
-from licenseCheck import check_license  # adjust import path to your project
+from metrics.licenseCheck import check_license  # adjust import path to your project
 
 def write(p: Path, name: str, content: str):
     f = p / name
