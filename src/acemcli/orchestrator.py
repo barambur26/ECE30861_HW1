@@ -1,9 +1,13 @@
 from __future__ import annotations
 import concurrent.futures as cf
+import logging
 from typing import Iterable
 import orjson
 from acmecli.metrics.base import all_metrics
 from acmecli.models import MetricResult, Category
+
+# Create module logger
+logger = logging.getLogger(__name__)
 
 WEIGHTS = {
     "ramp_up_time": 0.15,
@@ -17,6 +21,9 @@ WEIGHTS = {
 }
 
 def _merge(base: MetricResult, add: MetricResult) -> MetricResult:
+    """Merge two MetricResult objects, preferring non-zero values from 'add'."""
+    logger.debug(f"Merging metric results for {base.name}")
+    
     def pick(a: float, b: float) -> float:
         return b if isinstance(b, (int, float)) and b not in (0, 0.0) else a
 
@@ -48,15 +55,34 @@ def _merge(base: MetricResult, add: MetricResult) -> MetricResult:
     return base
 
 def _compute_one(url: str, category: Category) -> MetricResult:
+    """Compute all metrics for a single URL."""
+    logger.info(f"Computing metrics for {category} URL: {url}")
+    
     contributing = [m for m in all_metrics() if m.supports(url, category)]
+    logger.debug(f"Found {len(contributing)} contributing metrics: {[m.name for m in contributing]}")
+    
     if not contributing:
-        raise ValueError(f"No metric supports URL: {url}")
+        error_msg = f"No metric supports URL: {url}"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
 
-    results = [m.compute(url, category) for m in contributing]
+    logger.debug(f"Computing individual metrics for {url}")
+    results = []
+    for metric in contributing:
+        try:
+            result = metric.compute(url, category)
+            results.append(result)
+            logger.debug(f"Metric {metric.name} completed for {url}")
+        except Exception as e:
+            logger.error(f"Metric {metric.name} failed for {url}: {e}")
+            raise
+    
+    logger.debug(f"Merging {len(results)} metric results for {url}")
     base = results[0]
     for r in results[1:]:
         base = _merge(base, r)
 
+    logger.debug(f"Computing weighted net score for {url}")
     net = 0.0
     net += WEIGHTS["ramp_up_time"] * base.ramp_up_time
     net += WEIGHTS["bus_factor"] * base.bus_factor
@@ -66,17 +92,39 @@ def _compute_one(url: str, category: Category) -> MetricResult:
     net += WEIGHTS["dataset_and_code_score"] * base.dataset_and_code_score
     net += WEIGHTS["dataset_quality"] * base.dataset_quality
     net += WEIGHTS["code_quality"] * base.code_quality
+    
     base.net_score = max(0.0, min(1.0, net))
     base.net_score_latency = 0
+    
+    logger.info(f"Completed metrics computation for {url} with net score: {base.net_score:.3f}")
     return base
 
 def compute_all(pairs: Iterable[tuple[str, Category]]) -> Iterable[MetricResult]:
+    """Compute metrics for all URL pairs in parallel."""
+    pairs_list = list(pairs)
+    logger.info(f"Starting parallel computation for {len(pairs_list)} URLs with max_workers=8")
+    
     with cf.ThreadPoolExecutor(max_workers=8) as ex:
-        futures = [ex.submit(_compute_one, u, c) for (u, c) in pairs]
+        futures = [ex.submit(_compute_one, u, c) for (u, c) in pairs_list]
+        logger.debug(f"Submitted {len(futures)} tasks to thread pool")
+        
+        completed_count = 0
         for fut in cf.as_completed(futures):
-            yield fut.result()
+            try:
+                result = fut.result()
+                completed_count += 1
+                logger.debug(f"Completed {completed_count}/{len(futures)} tasks")
+                yield result
+            except Exception as e:
+                logger.error(f"Task failed with exception: {e}")
+                raise
+        
+        logger.info(f"All {len(futures)} tasks completed successfully")
 
 def to_ndjson(res: MetricResult) -> bytes:
+    """Convert MetricResult to NDJSON bytes."""
+    logger.debug(f"Converting result to NDJSON for {res.name}")
+    
     payload = {
         "name": res.name,
         "category": res.category,
@@ -99,4 +147,11 @@ def to_ndjson(res: MetricResult) -> bytes:
         "code_quality": res.code_quality,
         "code_quality_latency": res.code_quality_latency,
     }
-    return orjson.dumps(payload) + b"\n"
+    
+    try:
+        json_bytes = orjson.dumps(payload) + b"\n"
+        logger.debug(f"Successfully serialized result for {res.name} ({len(json_bytes)} bytes)")
+        return json_bytes
+    except Exception as e:
+        logger.error(f"Failed to serialize result for {res.name}: {e}")
+        raise
