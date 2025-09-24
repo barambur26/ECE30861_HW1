@@ -3,12 +3,15 @@ import time
 from huggingface_hub import HfApi
 from acmecli.models import MetricResult, Category
 from acmecli.metrics.base import register
+from acmecli.config import load_config
 
 class HFAPIMetric:
     name = "hf_api"
 
     def __init__(self) -> None:
-        self.api = HfApi()
+        cfg = load_config()
+        # HfApi uses env var HF_TOKEN automatically; we also pass if present
+        self.api = HfApi(token=cfg.hf_token) if cfg.hf_token else HfApi()
 
     def supports(self, url: str, category: Category) -> bool:
         return url.startswith("https://huggingface.co/") and category in ("MODEL", "DATASET")

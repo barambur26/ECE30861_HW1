@@ -1,9 +1,13 @@
 from __future__ import annotations
 import concurrent.futures as cf
-from typing import Iterable
+import logging
+from typing import Iterable, List, Tuple
 import orjson
 from acmecli.metrics.base import all_metrics
 from acmecli.models import MetricResult, Category
+from acmecli.config import load_config
+
+log = logging.getLogger(__name__)
 
 WEIGHTS = {
     "ramp_up_time": 0.15,
@@ -44,7 +48,6 @@ def _merge(base: MetricResult, add: MetricResult) -> MetricResult:
 
     base.code_quality = pick(base.code_quality, add.code_quality)
     base.code_quality_latency = max(base.code_quality_latency, add.code_quality_latency)
-
     return base
 
 def _compute_one(url: str, category: Category) -> MetricResult:
@@ -70,11 +73,22 @@ def _compute_one(url: str, category: Category) -> MetricResult:
     base.net_score_latency = 0
     return base
 
-def compute_all(pairs: Iterable[tuple[str, Category]]) -> Iterable[MetricResult]:
-    with cf.ThreadPoolExecutor(max_workers=8) as ex:
-        futures = [ex.submit(_compute_one, u, c) for (u, c) in pairs]
-        for fut in cf.as_completed(futures):
-            yield fut.result()
+def compute_all(pairs: Iterable[tuple[str, Category]]) -> Tuple[List[MetricResult], List[tuple[str, str]]]:
+    cfg = load_config()
+    results: List[MetricResult] = []
+    errors: List[tuple[str, str]] = []
+
+    with cf.ThreadPoolExecutor(max_workers=cfg.workers) as ex:
+        future_map = {ex.submit(_compute_one, u, c): (u, c) for (u, c) in pairs}
+        for fut in cf.as_completed(future_map):
+            url, cat = future_map[fut]
+            try:
+                results.append(fut.result())
+            except Exception as e:
+                msg = f"{type(e).__name__}: {e}"
+                errors.append((url, msg))
+                log.warning("compute failed for %s (%s): %s", url, cat, msg)
+    return results, errors
 
 def to_ndjson(res: MetricResult) -> bytes:
     payload = {
