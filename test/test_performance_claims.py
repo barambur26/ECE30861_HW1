@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 import pytest
-from acmecli.metrics.performance_claims import PerformanceClaimsMetric
+from acemcli.metrics.performance_claims import PerformanceClaimsMetric
 
 
 class TestPerformanceClaimsMetric:

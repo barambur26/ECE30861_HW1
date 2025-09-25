@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 import pytest
 from unittest.mock import patch
-from acmecli.cli import infer_category, main
+from acemcli.cli import infer_category, main
 
 
 class TestInferCategory:
@@ -95,7 +95,7 @@ class TestMainFunction:
         
         try:
             # Mock the compute_all function to avoid actual processing
-            with patch('acmecli.cli.compute_all') as mock_compute:
+            with patch('acemcli.cli.compute_all') as mock_compute:
                 mock_compute.return_value = []  # Return empty results
                 
                 result = main(tmp_file_path)
@@ -131,7 +131,7 @@ class TestMainFunction:
             tmp_file_path = tmp_file.name
         
         try:
-            with patch('acmecli.cli.compute_all') as mock_compute:
+            with patch('acemcli.cli.compute_all') as mock_compute:
                 mock_compute.return_value = []
                 
                 result = main(tmp_file_path)
@@ -148,7 +148,7 @@ class TestMainFunction:
             except OSError:
                 pass
     
-    @patch('acmecli.cli.compute_all')
+    @patch('acemcli.cli.compute_all')
     def test_main_handles_compute_exception(self, mock_compute):
         """Test main function handles exceptions from compute_all."""
         mock_compute.side_effect = Exception("Computation failed")

@@ -2,8 +2,8 @@ from __future__ import annotations
 import tempfile, time
 from pathlib import Path
 from huggingface_hub import snapshot_download
-from acmecli.models import MetricResult, Category
-from acmecli.metrics.base import register
+from acemcli.models import MetricResult, Category
+from acemcli.metrics.base import register
 
 class LocalRepoMetric:
     name = "local_repo"

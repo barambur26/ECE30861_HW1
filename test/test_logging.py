@@ -8,7 +8,7 @@ import os
 import tempfile
 from pathlib import Path
 import pytest
-from acmecli.logging_setup import setup_logging
+from acemcli.logging_setup import setup_logging
 
 
 class TestLoggingSetup:

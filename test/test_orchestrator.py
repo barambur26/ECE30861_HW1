@@ -4,8 +4,8 @@ Test suite for orchestrator and models functionality.
 from __future__ import annotations
 import pytest
 from unittest.mock import Mock, patch
-from acmecli.models import MetricResult, SizeScore
-from acmecli.orchestrator import _merge, to_ndjson, WEIGHTS
+from acemcli.models import MetricResult, SizeScore
+from acemcli.orchestrator import _merge, to_ndjson, WEIGHTS
 
 
 class TestModels:

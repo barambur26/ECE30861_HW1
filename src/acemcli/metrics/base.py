@@ -1,7 +1,7 @@
 from __future__ import annotations
 import logging
 from typing import Protocol, runtime_checkable, ClassVar
-from acmecli.models import MetricResult, Category
+from acemcli.models import MetricResult, Category
 
 # Create module logger
 logger = logging.getLogger(__name__)

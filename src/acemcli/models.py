@@ -10,7 +10,7 @@ class SizeScore(TypedDict):
     desktop_pc: float
     aws_server: float
 
-@dataclass(slots=True)
+@dataclass
 class MetricResult:
     name: str
     category: Category

@@ -3,8 +3,8 @@ import concurrent.futures as cf
 import logging
 from typing import Iterable
 import orjson
-from acmecli.metrics.base import all_metrics
-from acmecli.models import MetricResult, Category
+from acemcli.metrics.base import all_metrics
+from acemcli.models import MetricResult, Category
 
 # Create module logger
 logger = logging.getLogger(__name__)

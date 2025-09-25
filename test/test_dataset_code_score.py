@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 import pytest
-from acmecli.metrics.dataset_code_score import DatasetAndCodeScoreMetric
+from acemcli.metrics.dataset_code_score import DatasetAndCodeScoreMetric
 
 
 class TestDatasetAndCodeScoreMetric:
