@@ -1,0 +1,4 @@
+# file: C:\Users\piped\Desktop\ECE30861_HW1\src\metrics\dataset_quality.py
+# hypothesis_version: 6.140.2
+
+[0.0, 0.3, 0.7, 1.0, 1000, '*', '/', 'DATASET', 'aws_server', 'benchmark', 'citation', 'dataset_quality', 'desktop_pc', 'doi', 'ignore', 'jetson_nano', 'license', 'raspberry_pi', 'readme', 'split', 'test', 'train', 'utf-8', 'validation']
