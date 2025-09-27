@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from metrics.codeCheck import score_code_quality
+from src.metrics.codeCheck import score_code_quality
 
 
 # -----------------------------
