@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 name = "acmecli"
 version = "0.0.1"
 description = "CLI for trustworthy model reuse"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 dependencies = [
 "typing-extensions>=4.8",
 "huggingface-hub>=0.24.0",

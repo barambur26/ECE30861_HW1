@@ -1,4 +1,4 @@
-from acmecli.metrics.size_score import SizeScoreMetric
+from acemcli.metrics.size_score import SizeScoreMetric
 
 def test_supports_size_metric_model_url():
     m = SizeScoreMetric()
