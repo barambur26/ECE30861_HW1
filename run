@@ -9,18 +9,18 @@ fi
 
 
 if [[ "$cmd" == "install" ]]; then
-python -m pip install --user -U pip
-python -m pip install --user -e .[dev]
+python3 -m pip install --user -U pip
+python3 -m pip install --user -e .[dev]
 echo "OK" >&2
 exit 0
 elif [[ "$cmd" == "test" ]]; then
 # Run pytest with coverage and print required summary line
-python - <<'PY'
+python3 - <<'PY'
 import subprocess, sys, re
 
 
 # run tests with coverage
-proc = subprocess.run([sys.executable, '-m', 'pytest', '--cov=acmecli', '--cov-report=term-missing', '-q'], capture_output=True, text=True)
+proc = subprocess.run([sys.executable, '-m', 'pytest', '--cov=acemcli', '--cov-report=term-missing', '-q'], capture_output=True, text=True)
 print(proc.stdout)
 # naive parse of summary line from pytest output
 out = proc.stdout + proc.stderr
@@ -40,7 +40,7 @@ PY
 exit $?
 elif [[ -f "$cmd" ]]; then
 shift || true
-python -m acmecli.cli "$cmd" "$@"
+python3 -m acmecli.cli "$cmd" "$@"
 else
 echo "Unknown command: $cmd" >&2
 exit 1
