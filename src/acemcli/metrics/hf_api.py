@@ -3,7 +3,6 @@ import time
 from huggingface_hub import HfApi
 from acmecli.models import MetricResult, Category
 from acmecli.metrics.base import register
-from acmecli.config import load_config
 
 class HFAPIMetric:
     name = "hf_api"
