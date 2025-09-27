@@ -9,8 +9,8 @@ import tempfile
 from pathlib import Path
 from typing import List, Dict, Any
 from huggingface_hub import snapshot_download
-from acmecli.models import MetricResult, Category
-from acmecli.metrics.base import register
+from acemcli.models import MetricResult, Category
+from acemcli.metrics.base import register
 import logging
 
 logger = logging.getLogger(__name__)
@@ -41,8 +41,13 @@ class DatasetAndCodeScoreMetric:
         
         try:
             # Extract namespace and repo name from URL
-            namespace, repo = url.rstrip("/").split("/")[-2:]
-            repo_id = f"{namespace}/{repo}"
+            url_parts = url.rstrip("/").split("/")
+            if len(url_parts) >= 2:
+                namespace, repo = url_parts[-2:]
+            else:
+                namespace, repo = url_parts[-1], ""
+            
+            repo_id = f"{namespace}/{repo}" if repo else namespace
             
             logger.info(f"Computing dataset and code score for {repo_id}")
             
@@ -54,15 +59,39 @@ class DatasetAndCodeScoreMetric:
                     local_dir_use_symlinks=False
                 )
                 
-                score = self._analyze_repository(Path(local_dir), category)
+                dataset_code_score = self._analyze_repository(Path(local_dir), category)
                 
         except Exception as e:
             logger.error(f"Error computing dataset and code score for {url}: {e}")
-            score = 0.0
+            dataset_code_score = 0.0
+            namespace, repo = "unknown", "unknown"
+            repo_id = f"{namespace}/{repo}"
         
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         
-        return score, latency_ms
+        # Return a complete MetricResult object
+        return MetricResult(
+            name=repo_id,
+            category=category,
+            net_score=0.0,  # Will be calculated by orchestrator
+            net_score_latency=0,
+            ramp_up_time=0.0,  # Not calculated by this metric
+            ramp_up_time_latency=0,
+            bus_factor=0.0,  # Not calculated by this metric
+            bus_factor_latency=0,
+            performance_claims=0.0,  # Not calculated by this metric
+            performance_claims_latency=0,
+            license=0.0,  # Not calculated by this metric
+            license_latency=0,
+            size_score={"raspberry_pi": 0.0, "jetson_nano": 0.0, "desktop_pc": 0.0, "aws_server": 0.0},
+            size_score_latency=0,
+            dataset_and_code_score=dataset_code_score,
+            dataset_and_code_score_latency=latency_ms,
+            dataset_quality=0.0,  # Not calculated by this metric
+            dataset_quality_latency=0,
+            code_quality=0.0,  # Not calculated by this metric
+            code_quality_latency=0,
+        )
     
     def _analyze_repository(self, repo_path: Path, category: Category) -> float:
         """Analyze the repository and compute the dataset and code score."""
