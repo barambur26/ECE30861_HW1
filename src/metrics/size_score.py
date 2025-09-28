@@ -2,8 +2,8 @@ from __future__ import annotations
 import logging, tempfile, time
 from pathlib import Path
 from huggingface_hub import snapshot_download
-from acemcli.models import MetricResult, Category, SizeScore
-from acemcli.metrics.base import register
+from src.models import MetricResult, Category, SizeScore
+from src.metrics.base import register
 
 log = logging.getLogger(__name__)
 
