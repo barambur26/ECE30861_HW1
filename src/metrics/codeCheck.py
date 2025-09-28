@@ -1,13 +1,18 @@
 from __future__ import annotations
 import ast
 import json
+import logging
 import os
 import re
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Set
+from huggingface_hub import snapshot_download
+from src.models import MetricResult, Category
+from src.metrics.base import register
 
 
 @dataclass
@@ -217,55 +222,139 @@ def _readme_quality(repo: Path) -> Tuple[float, Dict[str, object]]:
 
 def _tests_and_coverage(repo: Path) -> Tuple[float, Dict[str, object]]:
     """
-    Score:
-      - tests directory or test_*.py present
-      - README coverage badge
-      - presence of pytest/coverage config files
+    Enhanced test analysis:
+      - Tests directory structure and organization
+      - Test file quantity and quality indicators
+      - Coverage badges and configuration
+      - Test framework usage and best practices
     """
     details = {}
+    
+    # Test directory analysis
     has_tests_dir = (repo / "tests").exists()
-    any_test_file = any(p.name.startswith("test_") or p.name.endswith("_test.py") for p in _iter_python_files(repo))
-    tests_present = has_tests_dir or any_test_file
-
-    # coverage badge in README
+    test_files = [p for p in _iter_python_files(repo) 
+                  if p.name.startswith("test_") or p.name.endswith("_test.py")]
+    test_dir_files = []
+    
+    if has_tests_dir:
+        test_dir_files = [p for p in (repo / "tests").rglob("*.py") if p.is_file()]
+    
+    total_test_files = len(test_files) + len(test_dir_files)
+    tests_present = total_test_files > 0
+    
+    # Test file quality analysis
+    test_quality_indicators = {
+        "has_conftest": any(f.name == "conftest.py" for f in test_files + test_dir_files),
+        "has_fixtures": False,
+        "has_parametrized_tests": False,
+        "has_mock_usage": False,
+        "test_organization": "poor"
+    }
+    
+    # Analyze test file content for quality indicators
+    for test_file in (test_files + test_dir_files)[:10]:  # Limit analysis for performance
+        try:
+            content = test_file.read_text(encoding="utf-8", errors="ignore").lower()
+            if "fixture" in content or "@pytest.fixture" in content:
+                test_quality_indicators["has_fixtures"] = True
+            if "parametrize" in content or "@pytest.mark.parametrize" in content:
+                test_quality_indicators["has_parametrized_tests"] = True
+            if "mock" in content or "patch" in content:
+                test_quality_indicators["has_mock_usage"] = True
+        except Exception:
+            continue
+    
+    # Test organization scoring
+    if has_tests_dir and len(test_dir_files) > 5:
+        test_quality_indicators["test_organization"] = "excellent"
+    elif has_tests_dir or total_test_files > 3:
+        test_quality_indicators["test_organization"] = "good"
+    elif total_test_files > 0:
+        test_quality_indicators["test_organization"] = "basic"
+    
+    # Coverage analysis
     coverage_pct = None
     readme_files = list(repo.glob("README*"))
     if readme_files:
         try:
             txt = readme_files[0].read_text(encoding="utf-8", errors="ignore")
-            m = re.search(r"(\d{1,3})\s*%\s*coverage", txt, re.IGNORECASE)
-            if m:
-                coverage_pct = min(100, max(0, int(m.group(1))))
+            # Look for various coverage badge formats
+            patterns = [
+                r"(\d{1,3})\s*%\s*coverage",
+                r"coverage[^0-9]*(\d{1,3})",
+                r"badge.*coverage.*(\d{1,3})"
+            ]
+            for pattern in patterns:
+                m = re.search(pattern, txt, re.IGNORECASE)
+                if m:
+                    coverage_pct = min(100, max(0, int(m.group(1))))
+                    break
         except Exception:
             pass
 
-    # config presence
-    cfg_files = [
-        "pyproject.toml",
-        "pytest.ini",
-        "tox.ini",
-        ".coveragerc",
-        "setup.cfg",
-    ]
-    present_cfg = {c: (repo / c).exists() for c in cfg_files}
-
-    # scoring heuristic
-    score = 0.0
-    score += 0.5 if tests_present else 0.0
-    if coverage_pct is not None:
-        score += 0.4 * (coverage_pct / 100.0)
-    score += 0.1 * (sum(present_cfg.values()) / len(present_cfg))
-
-    details.update(
-        dict(
-            tests_present=tests_present,
-            has_tests_dir=has_tests_dir,
-            any_test_file=any_test_file,
-            coverage_badge_pct=coverage_pct,
-            configs_present=present_cfg,
+    # Enhanced config analysis
+    cfg_files = {
+        "pyproject.toml": 0.3,
+        "pytest.ini": 0.2,
+        "tox.ini": 0.15,
+        ".coveragerc": 0.15,
+        "setup.cfg": 0.1,
+        "conftest.py": 0.1
+    }
+    
+    config_score = 0.0
+    present_cfg = {}
+    for cfg_file, weight in cfg_files.items():
+        exists = (repo / cfg_file).exists() if cfg_file != "conftest.py" else any(
+            f.name == cfg_file for f in test_files + test_dir_files
         )
-    )
-    return score, details
+        present_cfg[cfg_file] = exists
+        if exists:
+            config_score += weight
+
+    # Enhanced scoring with quality factors
+    score = 0.0
+    
+    # Base test presence (40%)
+    if tests_present:
+        score += 0.4
+        # Bonus for test quantity
+        if total_test_files >= 10:
+            score += 0.1
+        elif total_test_files >= 5:
+            score += 0.05
+    
+    # Test quality bonus (20%)
+    quality_bonus = 0.0
+    quality_bonus += 0.05 if test_quality_indicators["has_conftest"] else 0
+    quality_bonus += 0.05 if test_quality_indicators["has_fixtures"] else 0
+    quality_bonus += 0.05 if test_quality_indicators["has_parametrized_tests"] else 0
+    quality_bonus += 0.05 if test_quality_indicators["has_mock_usage"] else 0
+    score += quality_bonus
+    
+    # Coverage bonus (25%)
+    if coverage_pct is not None:
+        score += 0.25 * (coverage_pct / 100.0)
+    elif "coverage" in str(present_cfg).lower():
+        score += 0.1  # Small bonus for coverage config without badge
+    
+    # Configuration bonus (15%)
+    score += 0.15 * config_score
+
+    details.update({
+        "tests_present": tests_present,
+        "has_tests_dir": has_tests_dir,
+        "total_test_files": total_test_files,
+        "test_files_in_root": len(test_files),
+        "test_files_in_dir": len(test_dir_files),
+        "coverage_badge_pct": coverage_pct,
+        "configs_present": present_cfg,
+        "test_quality_indicators": test_quality_indicators,
+        "config_score": round(config_score, 3),
+        "quality_bonus": round(quality_bonus, 3)
+    })
+    
+    return min(1.0, score), details
 
 
 def _structure_score(repo: Path, py_files: List[Path]) -> Tuple[float, Dict[str, object]]:
@@ -325,25 +414,100 @@ def _governance_ci_score(repo: Path) -> Tuple[float, Dict[str, object]]:
 
 
 def _code_clarity_score(repo: Path, py_files: List[Path]) -> Tuple[float, Dict[str, object]]:
+    """Enhanced code clarity analysis with more sophisticated metrics."""
     ast_stats = _analyze_python_ast(py_files)
     readme_score, readme_det = _readme_quality(repo)
+    
+    # Enhanced complexity analysis
+    complexity_stats = _analyze_complexity(py_files)
+    
+    # Security analysis
+    security_issues = _analyze_security_patterns(py_files)
+    
+    # Code style and consistency analysis
+    style_issues = _analyze_code_style(py_files)
 
-    # penalize extremely long lines (over 120 avg -> bad)
+    # Penalize extremely long lines (over 120 avg -> bad)
     line_length_penalty = 0.0
     if ast_stats["avg_line_len"] > 120:
         line_length_penalty = min(0.4, (ast_stats["avg_line_len"] - 120) / 200.0)
+    
+    # Complexity penalty
+    complexity_penalty = 0.0
+    if complexity_stats["complexity_ratio"] > 0.3:  # More than 30% complex functions
+        complexity_penalty = min(0.2, complexity_stats["complexity_ratio"] - 0.3)
+    
+    # Security penalty
+    security_penalty = 0.0
+    total_security_issues = sum(security_issues.values())
+    if total_security_issues > 0:
+        security_penalty = min(0.3, total_security_issues * 0.05)
 
-    # heuristic weighting
+    # Enhanced weighting with more factors
     score = (
-        0.40 * ast_stats["docstring_coverage"]
-        + 0.30 * ast_stats["type_hint_coverage"]
-        + 0.15 * ast_stats["comment_ratio"]
-        + 0.15 * readme_score
+        0.35 * ast_stats["docstring_coverage"] +      # Reduced weight
+        0.25 * ast_stats["type_hint_coverage"] +      # Reduced weight
+        0.15 * ast_stats["comment_ratio"] +           # Maintained
+        0.15 * readme_score +                         # Maintained
+        0.10 * (1.0 - complexity_stats["complexity_ratio"])  # New: complexity bonus
     )
-    score = max(0.0, score - line_length_penalty)
+    
+    # Apply penalties
+    score = max(0.0, score - line_length_penalty - complexity_penalty - security_penalty)
 
-    details = dict(ast_stats=ast_stats, readme=readme_det, line_length_penalty=line_length_penalty)
+    details = {
+        "ast_stats": ast_stats,
+        "readme": readme_det,
+        "complexity_stats": complexity_stats,
+        "security_issues": security_issues,
+        "style_issues": style_issues,
+        "penalties": {
+            "line_length": round(line_length_penalty, 3),
+            "complexity": round(complexity_penalty, 3),
+            "security": round(security_penalty, 3)
+        }
+    }
     return score, details
+
+
+def _analyze_code_style(py_files: List[Path]) -> Dict[str, object]:
+    """Analyze code style and consistency issues."""
+    style_issues = {
+        "long_lines": 0,
+        "short_variable_names": 0,
+        "missing_blank_lines": 0,
+        "trailing_whitespace": 0,
+        "inconsistent_quotes": 0
+    }
+    
+    for file in py_files[:20]:  # Limit for performance
+        try:
+            content = file.read_text(encoding="utf-8", errors="ignore")
+            lines = content.splitlines()
+            
+            for i, line in enumerate(lines):
+                # Long lines
+                if len(line) > 120:
+                    style_issues["long_lines"] += 1
+                
+                # Trailing whitespace
+                if line.rstrip() != line:
+                    style_issues["trailing_whitespace"] += 1
+                
+                # Short variable names (simple heuristic)
+                words = re.findall(r'\b[a-z_][a-z0-9_]{1,2}\b', line.lower())
+                style_issues["short_variable_names"] += len([w for w in words if len(w) <= 2])
+            
+            # Inconsistent quotes (simple check)
+            single_quotes = content.count("'")
+            double_quotes = content.count('"')
+            if single_quotes > 0 and double_quotes > 0:
+                style_issues["inconsistent_quotes"] += 1
+                
+        except Exception:
+            continue
+    
+    return style_issues
 
 
 def score_code_quality(repo_path: str | Path) -> MetricResult:
@@ -407,7 +571,202 @@ def score_code_quality(repo_path: str | Path) -> MetricResult:
     )
 
 
-# --- Optional: tiny CLI shim for local testing ---
+class CodeQualityMetric:
+    """
+    Enhanced Code Quality Metric for ACME CLI
+    
+    Evaluates code repositories across multiple dimensions:
+    - Maintainer responsiveness (git activity, community health)
+    - Code clarity (documentation, type hints, readability)
+    - Structure (packaging, organization, best practices)
+    - Tests and coverage (test presence, quality, coverage)
+    - Governance and CI (licensing, automation, dependency management)
+    - Security and complexity (vulnerability patterns, code complexity)
+    """
+    
+    name = "code_quality"
+    
+    def supports(self, url: str, category: Category) -> bool:
+        """Check if this metric supports the given URL and category."""
+        return category == "CODE" or (
+            url.startswith("https://huggingface.co/") and 
+            category in ("MODEL", "DATASET")
+        )
+    
+    def compute(self, url: str, category: Category) -> MetricResult:
+        """Compute the code quality score for the given repository."""
+        start_time = time.perf_counter()
+        
+        try:
+            # Extract namespace and repo name from URL
+            url_parts = url.rstrip("/").split("/")
+            if len(url_parts) >= 2:
+                namespace, repo = url_parts[-2:]
+            else:
+                namespace, repo = url_parts[-1], "unknown"
+            
+            repo_id = f"{namespace}/{repo}" if repo != "unknown" else namespace
+            
+            logging.info(f"Computing code quality score for {repo_id}")
+            
+            # Download repository for analysis
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                local_dir = snapshot_download(
+                    repo_id=repo_id,
+                    local_dir=tmp_dir,
+                    local_dir_use_symlinks=False
+                )
+                
+                code_quality_score = self._analyze_code_quality(Path(local_dir))
+                
+        except Exception as e:
+            logging.error(f"Error computing code quality score for {url}: {e}")
+            code_quality_score = 0.0
+            namespace, repo = "unknown", "unknown"
+            repo_id = f"{namespace}/{repo}"
+        
+        latency_ms = int((time.perf_counter() - start_time) * 1000)
+        
+        # Return a complete MetricResult object
+        return MetricResult(
+            name=repo_id,
+            category=category,
+            net_score=0.0,  # Will be calculated by orchestrator
+            net_score_latency=0,
+            ramp_up_time=0.0,  # Not calculated by this metric
+            ramp_up_time_latency=0,
+            bus_factor=0.0,  # Not calculated by this metric
+            bus_factor_latency=0,
+            performance_claims=0.0,  # Not calculated by this metric
+            performance_claims_latency=0,
+            license=0.0,  # Not calculated by this metric
+            license_latency=0,
+            size_score={"raspberry_pi": 0.0, "jetson_nano": 0.0, "desktop_pc": 0.0, "aws_server": 0.0},
+            size_score_latency=0,
+            dataset_and_code_score=0.0,  # Not calculated by this metric
+            dataset_and_code_score_latency=0,
+            dataset_quality=0.0,  # Not calculated by this metric
+            dataset_quality_latency=0,
+            code_quality=code_quality_score,
+            code_quality_latency=latency_ms,
+        )
+    
+    def _analyze_code_quality(self, repo_path: Path) -> float:
+        """Analyze the repository for code quality factors."""
+        py_files = _iter_python_files(repo_path)
+        
+        # Get individual component scores
+        maint_score, maint_det = _git_recent_activity_score(repo_path)
+        clarity_score, clarity_det = _code_clarity_score(repo_path, py_files)
+        struct_score, struct_det = _structure_score(repo_path, py_files)
+        tests_score, tests_det = _tests_and_coverage(repo_path)
+        gov_score, gov_det = _governance_ci_score(repo_path)
+        
+        # Enhanced weights with more focus on maintainability
+        weights = {
+            "maintainer_responsiveness": 0.25,  # Increased importance
+            "code_clarity": 0.25,  # Increased importance
+            "structure": 0.15,  # Reduced
+            "tests_and_coverage": 0.25,  # Maintained high importance
+            "governance_and_ci": 0.10,  # Maintained
+        }
+        
+        final_score = (
+            weights["maintainer_responsiveness"] * maint_score +
+            weights["code_clarity"] * clarity_score +
+            weights["structure"] * struct_score +
+            weights["tests_and_coverage"] * tests_score +
+            weights["governance_and_ci"] * gov_score
+        )
+        
+        logging.debug(f"Code quality components - maintainer: {maint_score:.3f}, "
+                     f"clarity: {clarity_score:.3f}, structure: {struct_score:.3f}, "
+                     f"tests: {tests_score:.3f}, governance: {gov_score:.3f}")
+        logging.debug(f"Final code quality score: {final_score:.3f}")
+        
+        return min(1.0, max(0.0, final_score))
+
+
+# Register the metric
+register(CodeQualityMetric())
+
+
+# --- Enhanced helper functions ---
+
+def _analyze_complexity(py_files: List[Path]) -> Dict[str, float]:
+    """Analyze code complexity metrics."""
+    total_functions = 0
+    complex_functions = 0
+    total_classes = 0
+    deep_inheritance = 0
+    
+    for file in py_files:
+        try:
+            src = file.read_text(encoding="utf-8", errors="ignore")
+            tree = ast.parse(src)
+        except Exception:
+            continue
+            
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                total_functions += 1
+                # Simple complexity: count nested structures
+                complexity = len([n for n in ast.walk(node) 
+                                if isinstance(n, (ast.If, ast.For, ast.While, ast.Try))])
+                if complexity > 5:  # Threshold for complex functions
+                    complex_functions += 1
+                    
+            elif isinstance(node, ast.ClassDef):
+                total_classes += 1
+                # Check inheritance depth
+                if len(node.bases) > 2:
+                    deep_inheritance += 1
+    
+    complexity_ratio = (complex_functions / total_functions) if total_functions else 0.0
+    inheritance_ratio = (deep_inheritance / total_classes) if total_classes else 0.0
+    
+    return {
+        "complexity_ratio": complexity_ratio,
+        "inheritance_ratio": inheritance_ratio,
+        "total_functions": total_functions,
+        "total_classes": total_classes
+    }
+
+
+def _analyze_security_patterns(py_files: List[Path]) -> Dict[str, object]:
+    """Analyze code for potential security issues."""
+    security_issues = {
+        "eval_usage": 0,
+        "exec_usage": 0,
+        "shell_injection": 0,
+        "sql_injection": 0,
+        "hardcoded_secrets": 0
+    }
+    
+    for file in py_files:
+        try:
+            src = file.read_text(encoding="utf-8", errors="ignore")
+            src_lower = src.lower()
+            
+            # Check for dangerous patterns
+            if 'eval(' in src_lower:
+                security_issues["eval_usage"] += 1
+            if 'exec(' in src_lower:
+                security_issues["exec_usage"] += 1
+            if 'os.system(' in src_lower or 'subprocess.call(' in src_lower:
+                security_issues["shell_injection"] += 1
+            if 'execute(' in src_lower and ('select' in src_lower or 'insert' in src_lower):
+                security_issues["sql_injection"] += 1
+            if any(secret in src_lower for secret in ['password=', 'secret=', 'api_key=']):
+                security_issues["hardcoded_secrets"] += 1
+                
+        except Exception:
+            continue
+    
+    return security_issues
+
+
+# --- Optional: CLI shim for local testing ---
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(description="Score code quality of a local repo.")
