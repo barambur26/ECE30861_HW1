@@ -1,62 +1,87 @@
-from __future__ import annotations
-import logging, tempfile, time
-from pathlib import Path
-from huggingface_hub import snapshot_download
-from acemcli.models import MetricResult, Category
-from acemcli.metrics.base import register
 
-log = logging.getLogger(__name__)
+from __future__ import annotations
+import time as tm
+import logging as logmod
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from urllib.parse import urlparse
+
+from huggingface_hub import snapshot_download
+
+# project imports
+from ..models import MetricResult, Category
+from .base import register 
 
 KEYS = ("train", "test", "validation", "split", "license", "citation", "doi", "benchmark")
+ALLOW = ["README*", "readme*"]
 
+log = logmod.getLogger(__name__)
+
+
+# ----- small helper funcs (no heavy annotations) -----
+def hf_dataset_slug(url):
+    """owner/name from a Hugging Face DATASET url."""
+    parts = urlparse(url).path.strip("/").split("/")
+    if len(parts) < 3 or parts[0].lower() != "datasets":
+        raise ValueError("Bad HF dataset URL")
+    owner, name = parts[1], parts[2]
+    return owner, name
+
+
+def get_readme_text(owner, name):
+    """download just README files for speed; return text or ''"""
+    txt = ""
+    try:
+        with TemporaryDirectory() as tmp:
+            local = snapshot_download(
+                repo_id=f"{owner}/{name}",
+                repo_type="dataset",
+                local_dir=tmp,
+                local_dir_use_symlinks=False,
+                allow_patterns=ALLOW,
+            )
+            p = Path(local)
+            cands = list(p.glob("README*")) + list(p.glob("readme*"))
+            if cands:
+                txt = cands[0].read_text(encoding="utf-8", errors="ignore")
+    except Exception as e:
+        logmod.getLogger(__name__).warning("dataset_quality snapshot failed: %s/%s: %s", owner, name, e)
+    return txt
+
+
+def score_from_text(text):
+    """simple presence-based scoring on KEYS → [0,1]"""
+    t = (text or "").lower()
+    hits = sum(1 for k in KEYS if k in t)
+    base = 0.3  # neutral base
+    return max(0.0, min(1.0, base + 0.7 * (hits / max(1, len(KEYS)))))
+
+
+# ----- metric class kept tiny; just wires helpers -----
 class DatasetQualityMetric:
     name = "dataset_quality"
 
-    def supports(self, url: str, category: Category) -> bool:
-        return url.startswith("https://huggingface.co/") and category == "DATASET"
+    def supports(self, url, category: Category):
+        return category == "DATASET" and url.startswith("https://huggingface.co/")
 
-    def _score_from_text(self, text: str) -> float:
-        t = (text or "").lower()
-        hits = sum(1 for k in KEYS if k in t)
-        base = 0.3  # default when README is thin/missing
-        return max(0.0, min(1.0, base + 0.7 * (hits / max(1, len(KEYS)))))
+    def compute(self, url, category: Category):
+        t0 = tm.perf_counter()
 
-    def compute(self, url: str, category: Category) -> MetricResult:
-        t0 = time.perf_counter()
-        namespace, repo = url.rstrip("/").split("/")[3:5]
+        owner, name = hf_dataset_slug(url)
+        readme = get_readme_text(owner, name)
+        score = score_from_text(readme)
 
-        text = ""
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                local_dir = snapshot_download(
-                    repo_id=f"{namespace}/{repo}",
-                    local_dir=tmp,
-                    local_dir_use_symlinks=False,
-                )
-                p = Path(local_dir)
-                files = [f for f in p.rglob("*") if f.is_file()]
-                readme = next((f for f in files if f.name.lower().startswith("readme")), None)
-                if readme:
-                    text = readme.read_text(encoding="utf-8", errors="ignore")
-        except Exception as e:
-            log.warning("dataset_quality: snapshot failed for %s/%s: %s", namespace, repo, e)
+        latency_ms = int((tm.perf_counter() - t0) * 1000)
 
-        score = self._score_from_text(text)
-        log.info("dataset_quality %s/%s score=%.3f", namespace, repo, score)
-
-        latency_ms = int((time.perf_counter() - t0) * 1000)
+        # Only set this metric’s fields so other metrics can fill theirs.
         return MetricResult(
-            name=f"{namespace}/{repo}", category=category,
-            net_score=0.0, net_score_latency=0,
-            ramp_up_time=0.0, ramp_up_time_latency=0,
-            bus_factor=0.0, bus_factor_latency=0,
-            performance_claims=0.0, performance_claims_latency=0,
-            license=0.0, license_latency=0,
-            size_score={"raspberry_pi":0.0,"jetson_nano":0.0,"desktop_pc":0.0,"aws_server":0.0},
-            size_score_latency=0,
-            dataset_and_code_score=0.0, dataset_and_code_score_latency=0,
-            dataset_quality=score, dataset_quality_latency=latency_ms,
-            code_quality=0.0, code_quality_latency=0,
+            name=f"{owner}/{name}",
+            category=category,
+            dataset_quality=score,
+            dataset_quality_latency=latency_ms,
         )
 
+
+# register on import
 register(DatasetQualityMetric())
+
