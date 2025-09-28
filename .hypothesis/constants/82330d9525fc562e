@@ -1,0 +1,4 @@
+# file: C:\Users\piped\Desktop\ECE30861_HW1\src\metrics\size_score.py
+# hypothesis_version: 6.140.2
+
+[0.0, 1.0, 1000, 250000000, 500000000, 4000000000, 16000000000, '*', '.bin', '.h5', '.safetensors', '/', 'MODEL', 'aws_server', 'desktop_pc', 'jetson_nano', 'raspberry_pi', 'size_score']
