@@ -1,0 +1,11 @@
+# Test URL File for Task 6.1 - Integration Testing
+# This file contains 3 different URL types as specified in the requirements
+
+# MODEL URL (should be processed)
+https://huggingface.co/bert-base-uncased
+
+# DATASET URL (should be skipped - not MODEL category)
+https://huggingface.co/datasets/squad
+
+# CODE URL (should be skipped - not MODEL category)
+https://github.com/huggingface/transformers
